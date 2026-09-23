@@ -31,13 +31,21 @@ def bucket(result, rules):
     return {"error": "HIGH", "warning": "MEDIUM", "note": "INFO"}.get(level, "INFO")
 
 
+def suppressed(result):
+    """SARIF in-source suppression (checkov:skip, nosemgrep, ...)."""
+    return any(s.get("status", "accepted") != "rejected" for s in (result.get("suppressions") or []))
+
+
 def read_sarif(path):
     counts = {s: 0 for s in SEV}
-    top = []
+    top, n_suppressed = [], 0
     doc = json.loads(path.read_text() or "{}")
     for run in doc.get("runs", []):
         rules = {r.get("id"): r for r in (run.get("tool", {}).get("driver", {}).get("rules") or [])}
         for r in run.get("results") or []:
+            if suppressed(r):
+                n_suppressed += 1
+                continue
             b = bucket(r, rules)
             counts[b] += 1
             loc = ((r.get("locations") or [{}])[0].get("physicalLocation") or {})
@@ -49,7 +57,7 @@ def read_sarif(path):
                 "message": " ".join(((r.get("message") or {}).get("text") or "").split())[:200],
             })
     top.sort(key=lambda f: SEV.index(f["severity"]))
-    return counts, top
+    return counts, top, n_suppressed
 
 
 def git(*args):
@@ -70,12 +78,12 @@ def main():
     tools, findings = {}, []
     for tool in TOOL_ORDER:
         st = status.get(tool, {"status": "skipped", "note": ""})
-        entry = {**st, "counts": {s: 0 for s in SEV}, "total": 0}
+        entry = {**st, "counts": {s: 0 for s in SEV}, "total": 0, "suppressed": 0}
         sarif = out / f"{tool}.sarif"
         if st["status"] in ("ok", "findings") and sarif.is_file() and sarif.stat().st_size:
             try:
-                counts, top = read_sarif(sarif)
-                entry["counts"], entry["total"] = counts, sum(counts.values())
+                counts, top, n_sup = read_sarif(sarif)
+                entry["counts"], entry["total"], entry["suppressed"] = counts, sum(counts.values()), n_sup
                 findings += [{"tool": tool, **f} for f in top]
             except ValueError:
                 entry["status"], entry["note"] = "error", "invalid SARIF"
@@ -112,14 +120,14 @@ def main():
     icon = {"ok": "✅", "findings": "⚠️", "error": "❌", "skipped": "⚪"}
     md = ["## Security Scan", "",
           f"**Gate ({fail_on}): {gate}**. Only secrets fail the build. All other findings are advisory.", "",
-          "| Scanner | Status | CRITICAL | HIGH | MEDIUM | LOW | INFO | Note |",
-          "|---|---|---:|---:|---:|---:|---:|---|"]
+          "| Scanner | Status | CRITICAL | HIGH | MEDIUM | LOW | INFO | Suppressed | Note |",
+          "|---|---|---:|---:|---:|---:|---:|---:|---|"]
     for tool, t in tools.items():
         c = t["counts"]
         md.append(f"| `{tool}` | {icon.get(t['status'], '?')} {t['status']} | {c['CRITICAL']} | {c['HIGH']} | "
-                  f"{c['MEDIUM']} | {c['LOW']} | {c['INFO']} | {t['note']} |")
+                  f"{c['MEDIUM']} | {c['LOW']} | {c['INFO']} | {t['suppressed']} | {t['note']} |")
     md.append(f"| **total** | | {totals['CRITICAL']} | {totals['HIGH']} | {totals['MEDIUM']} | "
-              f"{totals['LOW']} | {totals['INFO']} | |")
+              f"{totals['LOW']} | {totals['INFO']} | {sum(t['suppressed'] for t in tools.values())} | |")
     if findings:
         md += ["", "<details><summary>Top 25 findings</summary>", "",
                "| Severity | Scanner | Rule | Location | Message |", "|---|---|---|---|---|"]
