@@ -39,3 +39,5 @@ printf 'print("ok")\n' > app.py; commit change
 expect pr-old-history 0 env LEAA_BASE_REF="$base" leaa-scan
 
 [ "$fails" = 0 ] && echo "all gate tests passed" || { echo "$fails test(s) failed"; exit 1; }
+
+python3 "$(dirname "$0")/test_report.py" || exit 1
