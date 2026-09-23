@@ -92,6 +92,9 @@ def main():
             entry["counts"]["MEDIUM"], entry["total"] = n, n
         tools[tool] = entry
 
+    # Worst first across ALL scanners, so a CRITICAL from a later scanner is
+    # never pushed out of the top-25 list by an earlier scanner's findings.
+    findings.sort(key=lambda f: SEV.index(f["severity"]))
     totals = {s: sum(t["counts"][s] for t in tools.values()) for s in SEV}
     secrets = tools["gitleaks"]
     if fail_on == "none":
