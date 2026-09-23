@@ -33,12 +33,28 @@ Pick the adapter for the place where your pull request lives.
 | Bitbucket or GitHub | Codemagic only | [`adapters/codemagic.yaml`](adapters/codemagic.yaml) |
 
 1. Copy the adapter into your repo.
-2. Replace `<DIGEST>` with the current image digest (below). For GitHub, also replace `<COMMIT_SHA>`.
+2. The adapters are pinned to the current release (below). Keep the pins. A release bump comes as a PR from IT Security, or you copy the new values.
 3. Open a pull request. Check the **Security Scan** result and the `security-reports` artifact.
 
 ### Current release
 
-The image is not published yet. The board decides the registry first (LEAA-2446, Q1). The adapters show GHCR as the planned location. This section will hold the digest and the commit SHA after the first release.
+| Item | Value |
+|---|---|
+| Image | `ghcr.io/davidvaquerizo-leadtech/security-pipeline@sha256:c20595bc2e72631b08de8188bdabda122e5583832d35a709d9d491c905bd5757` |
+| Reusable workflow commit | `e2423d35b2318ea6c9591a8a4752ac6de10b9297` |
+| Released | 2026-09-23 (CI run 35885375234, attempt 2) |
+| Platforms | linux/amd64, linux/arm64 |
+
+The adapters in [`adapters/`](adapters/) already use these values.
+
+Verify the signature before you pin a new digest:
+
+```sh
+cosign verify \
+  --certificate-identity "https://github.com/davidvaquerizo-leadtech/security-pipeline/.github/workflows/ci.yml@refs/heads/main" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/davidvaquerizo-leadtech/security-pipeline@sha256:c20595bc2e72631b08de8188bdabda122e5583832d35a709d9d491c905bd5757
+```
 
 ## Results
 
@@ -81,6 +97,8 @@ leaa-scan
 ```
 
 ## Develop
+
+- A release publishes on every merge to `main` (or `workflow_dispatch` on `main`) while the repo variable `PUBLISH_ENABLED` is `true`. Then update the table above and the adapters in one PR.
 
 - `tests/run.sh` checks the gate (clean, secret in tree, secret in a pull request, old history, gate off).
 - CI builds the image on amd64 and arm64, runs the tests inside it, and scans this repo.
