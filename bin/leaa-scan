@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# leaa-scan — run the shared security scan in the current directory.
+#
+# Runs every scanner that applies to the repo, writes one SARIF file per
+# scanner plus summary.md and summary.json to $LEAA_REPORT_DIR, and exits
+# by the gate policy. Needs no secrets and uploads nothing.
+#
+# Environment (all optional):
+#   LEAA_REPORT_DIR   output dir (default: security-reports)
+#   LEAA_FAIL_ON      secrets (default) | none
+#   LEAA_BASE_REF     git ref/sha to diff against for the secret scan.
+#                     Auto-detected on GitHub Actions, Bitbucket, Codemagic.
+#   LEAA_GITLEAKS_MODE auto (default) | full | dir
+#   LEAA_SKIP         space-separated scanners to skip
+#                     (gitleaks semgrep osv-scanner checkov zizmor actionlint)
+#
+# Exit codes: 0 pass, 1 gate failed (secret found), 2 the secret scan
+# could not run (the gate cannot be proven, so the build must not pass).
+set -uo pipefail
+
+LEAA_HOME="${LEAA_HOME:-$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)}"
+out="${LEAA_REPORT_DIR:-security-reports}"
+fail_on="${LEAA_FAIL_ON:-secrets}"
+skip=" ${LEAA_SKIP:-} "
+export SEMGREP_ENABLE_VERSION_CHECK=0 SEMGREP_SEND_METRICS=off
+
+mkdir -p "$out"
+status_file="$out/.status"
+: > "$status_file"
+
+log() { printf '[leaa-scan] %s\n' "$*" >&2; }
+# record <tool> <status: ok|findings|error|skipped> [note]
+record() { printf '%s\t%s\t%s\n' "$1" "$2" "${3:-}" >> "$status_file"; }
+wanted() { case "$skip" in *" $1 "*) record "$1" skipped "LEAA_SKIP"; return 1 ;; esac; return 0; }
+
+git_ok=0
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git_ok=1
+
+# ---- platform + base ref -------------------------------------------------
+platform=local
+if   [ -n "${GITHUB_ACTIONS:-}" ];        then platform=github-actions
+elif [ -n "${BITBUCKET_BUILD_NUMBER:-}" ]; then platform=bitbucket-pipelines
+elif [ -n "${CM_BUILD_ID:-}" ];            then platform=codemagic
+fi
+
+base="${LEAA_BASE_REF:-}"
+if [ -z "$base" ]; then
+  dest="${GITHUB_BASE_REF:-${BITBUCKET_PR_DESTINATION_BRANCH:-${CM_PULL_REQUEST_DEST:-}}}"
+  if [ -n "$dest" ] && [ "$git_ok" = 1 ]; then
+    git fetch --quiet --no-tags origin "$dest" 2>/dev/null || true
+    base="$(git merge-base "origin/$dest" HEAD 2>/dev/null || true)"
+  fi
+fi
+export LEAA_PLATFORM="$platform" LEAA_BASE_RESOLVED="$base"
+log "platform=$platform base=${base:-none} report_dir=$out gate=$fail_on"
+
+# Keep reports out of the scanned tree.
+excl="$(basename "$out")"
+
+# ---- gitleaks (the gate) -------------------------------------------------
+if wanted gitleaks; then
+  mode="${LEAA_GITLEAKS_MODE:-auto}"
+  args=(--redact --no-banner --exit-code 1 --report-format sarif --report-path "$out/gitleaks.sarif")
+  [ -f .gitleaks.toml ] && args+=(--config .gitleaks.toml)
+  if [ "$mode" = auto ]; then
+    if [ "$git_ok" = 1 ] && [ -n "$base" ]; then mode=range; else mode=dir; fi
+  fi
+  case "$mode" in
+    range) gitleaks git "${args[@]}" --log-opts="${base}..HEAD" . ;;
+    full)  gitleaks git "${args[@]}" . ;;
+    dir)   gitleaks dir "${args[@]}" . ;;
+    *) log "unknown LEAA_GITLEAKS_MODE=$mode"; false ;;
+  esac
+  rc=$?
+  case "$rc" in
+    0) record gitleaks ok "mode=$mode" ;;
+    1) record gitleaks findings "mode=$mode" ;;
+    *) record gitleaks error "mode=$mode exit=$rc" ;;
+  esac
+fi
+
+# ---- semgrep (SAST) ------------------------------------------------------
+if wanted semgrep; then
+  # Registry rule packs are fetched at run time (Semgrep Rules License:
+  # we do not redistribute them in the image).
+  semgrep scan --config p/ci --config p/security-audit --config p/owasp-top-ten \
+    --sarif --output "$out/semgrep.sarif" --metrics=off --disable-version-check \
+    --quiet --exclude "$excl" . >/dev/null
+  rc=$?
+  [ "$rc" = 0 ] && record semgrep ok || record semgrep error "exit=$rc"
+fi
+
+# ---- osv-scanner (dependencies, malicious packages) ----------------------
+if wanted osv-scanner; then
+  # requirements*.txt with version RANGES cannot be matched to advisories.
+  # Resolve them to exact pins first (LEAA-2446), then scan everything.
+  resolved="$out/resolved"
+  mkdir -p "$resolved"
+  if [ "$git_ok" = 1 ]; then reqs="$(git ls-files '*requirements*.txt')"
+  else reqs="$(find . -name '*requirements*.txt' -not -path "./$excl/*" -not -path '*/node_modules/*')"; fi
+  for f in $reqs; do
+    dest="$resolved/$(echo "${f#./}" | tr '/' '_')"
+    UV_CACHE_DIR="${TMPDIR:-/tmp}/leaa-uv" uv pip compile --quiet --no-header --universal \
+      --python-version 3.12 "$f" -o "${dest%.txt}.lock.txt" 2>/dev/null \
+      || log "osv-scanner: could not resolve $f (scanned as declared)"
+  done
+  osv-scanner scan source --recursive --allow-no-lockfiles \
+    --experimental-exclude "$excl" --format sarif \
+    --output-file "$out/osv-scanner.sarif" . "$resolved" >/dev/null 2>"$out/.osv.log"
+  rc=$?
+  case "$rc" in
+    0|128) record osv-scanner ok ;;
+    1) record osv-scanner findings ;;
+    *) record osv-scanner error "exit=$rc"; tail -5 "$out/.osv.log" >&2 ;;
+  esac
+fi
+
+# ---- checkov (IaC, Dockerfile) only when such files exist -----------------
+if wanted checkov; then
+  if [ -n "$(find . -not -path "./$excl/*" -not -path './.git/*' -not -path '*/node_modules/*' \
+        \( -name '*.tf' -o -name 'Dockerfile*' -o -name '*.bicep' -o -name 'Chart.yaml' \
+           -o -name '*.template.json' -o -name '*.template.yaml' \) -print -quit)" ]; then
+    checkov -d . --quiet --compact --soft-fail \
+      --framework terraform,dockerfile,kubernetes,helm,cloudformation,bicep \
+      --skip-path "$excl" --download-external-modules false \
+      --output sarif --output-file-path "$out" >/dev/null 2>&1
+    rc=$?
+    if [ -f "$out/results_sarif.sarif" ]; then mv "$out/results_sarif.sarif" "$out/checkov.sarif"; fi
+    [ "$rc" = 0 ] && [ -f "$out/checkov.sarif" ] && record checkov ok || record checkov error "exit=$rc"
+  else
+    record checkov skipped "no IaC or Dockerfile"
+  fi
+fi
+
+# ---- zizmor + actionlint only when GitHub workflows exist -----------------
+if [ -d .github/workflows ]; then
+  if wanted zizmor; then
+    zizmor --offline --persona=regular --format=sarif .github/workflows > "$out/zizmor.sarif" 2>/dev/null
+    rc=$?
+    # zizmor exits non-zero when it has findings; SARIF is still valid.
+    if [ -s "$out/zizmor.sarif" ]; then record zizmor ok; else record zizmor error "exit=$rc"; fi
+  fi
+  if wanted actionlint; then
+    if actionlint -no-color > "$out/actionlint.txt" 2>&1; then record actionlint ok
+    else record actionlint findings "see actionlint.txt"; fi
+  fi
+else
+  record zizmor skipped "no .github/workflows"
+  record actionlint skipped "no .github/workflows"
+fi
+
+# ---- report + gate -------------------------------------------------------
+python3 "$LEAA_HOME/lib/report.py" "$out" "$fail_on"
+exit $?

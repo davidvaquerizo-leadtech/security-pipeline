@@ -1,0 +1,22 @@
+# Merge into bitbucket-pipelines.yml in your repo.
+# Replace <DIGEST> with the published image digest (security-pipeline README).
+# The step needs no repository variables and no secrets.
+definitions:
+  steps:
+    - step: &leaa-security-scan
+        name: Security Scan
+        image: ghcr.io/davidvaquerizo-leadtech/security-pipeline@sha256:<DIGEST>
+        clone:
+          depth: full
+        script:
+          - leaa-scan
+        artifacts:
+          - security-reports/**
+
+pipelines:
+  pull-requests:
+    '**':
+      - step: *leaa-security-scan
+  branches:
+    main:
+      - step: *leaa-security-scan
