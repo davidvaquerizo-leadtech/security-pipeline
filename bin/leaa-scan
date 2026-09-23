@@ -83,9 +83,16 @@ fi
 if wanted semgrep; then
   # Registry rule packs are fetched at run time (Semgrep Rules License:
   # we do not redistribute them in the image).
+  # Skip vendored / generated code: it is upstream code, not the team's,
+  # and it drowns real findings (LEAA-2446 stack test: 652 of 689 semgrep
+  # results were in third_party/). osv-scanner still scans vendored deps.
+  vendor_excl=()
+  for d in third_party vendor node_modules Pods Carthage .dart_tool build dist .gradle; do
+    vendor_excl+=(--exclude "$d")
+  done
   semgrep scan --config p/ci --config p/security-audit --config p/owasp-top-ten \
     --sarif --output "$out/semgrep.sarif" --metrics=off --disable-version-check \
-    --quiet --exclude "$excl" . >/dev/null
+    --quiet --exclude "$excl" "${vendor_excl[@]}" . >/dev/null
   rc=$?
   [ "$rc" = 0 ] && record semgrep ok || record semgrep error "exit=$rc"
 fi
@@ -108,9 +115,14 @@ if wanted osv-scanner; then
     --experimental-exclude "$excl" --format sarif \
     --output-file "$out/osv-scanner.sarif" . "$resolved" >/dev/null 2>"$out/.osv.log"
   rc=$?
+  # Say how many lock files were read: "0 findings" with 0 lock files is
+  # not "no vulnerable dependencies", it is "not scanned".
+  nlock="$(grep -c 'Scanned .* file and found' "$out/.osv.log" 2>/dev/null || true)"
+  if [ "${nlock:-0}" = 0 ]; then lnote="no lock file found: commit pubspec.lock / Package.resolved / Podfile.lock / package-lock.json / gradle.lockfile"
+  else lnote="$nlock lock file(s)"; fi
   case "$rc" in
-    0|128) record osv-scanner ok ;;
-    1) record osv-scanner findings ;;
+    0|128) record osv-scanner ok "$lnote" ;;
+    1) record osv-scanner findings "$lnote" ;;
     *) record osv-scanner error "exit=$rc"; tail -5 "$out/.osv.log" >&2 ;;
   esac
 fi

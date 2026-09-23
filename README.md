@@ -20,6 +20,19 @@ Owner: IT Security (LEAA). Ticket: LEAA-2446.
 
 Dependency files that osv-scanner reads include `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `pubspec.lock` (Flutter/Dart), `Podfile.lock`, `Package.resolved` (iOS), `gradle.lockfile` (Android), `go.sum`, `Cargo.lock`, `composer.lock`, and `requirements*.txt`.
 
+**Commit your lock file.** The dependency scan reads lock files, not manifests. Without a lock file it cannot check your dependencies, and the summary says `no lock file found`.
+
+| Stack | Commit this file | Note |
+|---|---|---|
+| Flutter / Dart app | `pubspec.lock` | Libraries often do not commit it; apps must. |
+| iOS (SwiftPM) | `Package.resolved` | Xcode: keep it under `*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/` or the package root. |
+| iOS (CocoaPods) | `Podfile.lock` | |
+| Android (Gradle) | `gradle.lockfile` | Turn on Gradle dependency locking (`dependencyLocking { lockAllConfigurations() }`, then `./gradlew dependencies --write-locks`). |
+| Node | `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml` | |
+| Python | `requirements*.txt` (ranges are resolved automatically) or `poetry.lock` / `uv.lock` | |
+
+semgrep skips vendored and generated folders: `third_party`, `vendor`, `node_modules`, `Pods`, `Carthage`, `.dart_tool`, `build`, `dist`, `.gradle`. The dependency scan still reads vendored lock files.
+
 Tool versions and sha256 checksums: [`tools/versions.env`](tools/versions.env). Python tools are hash-locked: [`tools/requirements-*.txt`](tools/).
 
 ## Add it to your repo
