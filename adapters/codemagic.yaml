@@ -1,5 +1,6 @@
 # Add this workflow to codemagic.yaml in your repo. Keep your build
-# workflows as they are. Replace <DIGEST> with the published image digest.
+# workflows as they are.
+# Pinned to the current release (security-pipeline README, "Current release").
 # Linux instance: cheaper than macOS, has Docker, and the scan needs no Xcode.
 # The workflow needs no environment groups and no signing credentials.
 workflows:
@@ -21,7 +22,7 @@ workflows:
           docker run --rm \
             -v "$CM_BUILD_DIR:/src" -w /src \
             -e CM_BUILD_ID -e CM_PULL_REQUEST_DEST \
-            ghcr.io/davidvaquerizo-leadtech/security-pipeline@sha256:<DIGEST> \
+            ghcr.io/davidvaquerizo-leadtech/security-pipeline@sha256:c20595bc2e72631b08de8188bdabda122e5583832d35a709d9d491c905bd5757 \
             leaa-scan
     artifacts:
       - security-reports/**

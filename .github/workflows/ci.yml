@@ -62,7 +62,7 @@ jobs:
   publish:
     name: publish image (gated)
     needs: build-test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PUBLISH_ENABLED == 'true'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && vars.PUBLISH_ENABLED == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
