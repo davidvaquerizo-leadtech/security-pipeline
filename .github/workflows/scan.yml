@@ -1,0 +1,73 @@
+name: Security Scan (reusable)
+
+# Call from any GitHub repo:
+#
+#   jobs:
+#     security:
+#       uses: davidvaquerizo-leadtech/security-pipeline/.github/workflows/scan.yml@<commit-sha>
+#       with:
+#         image: <registry>/security-pipeline@sha256:<digest>
+#
+# Only secrets fail the job (board decision, LEAA-2446 Q4).
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: "Scanner image, pinned by digest."
+        type: string
+        required: true
+      runs-on:
+        description: "Runner label."
+        type: string
+        default: ubuntu-latest
+      fail-on:
+        description: "secrets | none"
+        type: string
+        default: secrets
+
+permissions:
+  contents: read
+
+jobs:
+  pin-check:
+    name: image pin check
+    runs-on: ubuntu-latest
+    steps:
+      - name: require a digest-pinned image
+        env:
+          IMAGE: ${{ inputs.image }}
+        run: |
+          case "$IMAGE" in
+            *@sha256:????????????????????????????????????????????????????????????????) echo "pinned: $IMAGE" ;;
+            *) echo "::error title=security-pipeline::image must be pinned by digest (<repo>@sha256:<64 hex>), got: $IMAGE"; exit 1 ;;
+          esac
+
+  scan:
+    name: security scan
+    needs: pin-check
+    runs-on: ${{ inputs.runs-on }}
+    container:
+      # The pin-check job above rejects any reference without @sha256:.
+      image: ${{ inputs.image }} # zizmor: ignore[unpinned-images]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: leaa-scan
+        env:
+          LEAA_FAIL_ON: ${{ inputs.fail-on }}
+        run: leaa-scan
+      - name: summary
+        if: always()
+        run: cat security-reports/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+      - name: upload reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: security-reports
+          path: security-reports/
+          retention-days: 30

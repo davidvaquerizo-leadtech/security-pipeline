@@ -1,0 +1,27 @@
+# Add this workflow to codemagic.yaml in your repo. Keep your build
+# workflows as they are. Replace <DIGEST> with the published image digest.
+# Linux instance: cheaper than macOS, has Docker, and the scan needs no Xcode.
+# The workflow needs no environment groups and no signing credentials.
+workflows:
+  leaa-security-scan:
+    name: Security Scan
+    instance_type: linux_x2
+    max_build_duration: 30
+    triggering:
+      events:
+        - pull_request
+        - push
+      branch_patterns:
+        - pattern: '*'
+          include: true
+          source: true
+    scripts:
+      - name: Security Scan
+        script: |
+          docker run --rm \
+            -v "$CM_BUILD_DIR:/src" -w /src \
+            -e CM_BUILD_ID -e CM_PULL_REQUEST_DEST \
+            ghcr.io/davidvaquerizo-leadtech/security-pipeline@sha256:<DIGEST> \
+            leaa-scan
+    artifacts:
+      - security-reports/**

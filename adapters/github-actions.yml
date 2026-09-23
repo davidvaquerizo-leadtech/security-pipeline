@@ -1,0 +1,15 @@
+# Copy to .github/workflows/security.yml in your repo.
+# Replace <COMMIT_SHA> (a commit of this repo) and <DIGEST> (the published
+# image digest). Both come from the security-pipeline README.
+name: Security Scan
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+permissions:
+  contents: read
+jobs:
+  security:
+    uses: davidvaquerizo-leadtech/security-pipeline/.github/workflows/scan.yml@<COMMIT_SHA>
+    with:
+      image: ghcr.io/davidvaquerizo-leadtech/security-pipeline@sha256:<DIGEST>

@@ -1,0 +1,4 @@
+# checkov hard-pins asteval==1.0.6 (GHSA-9w56-46f6-3qhx, PYSEC-2026-3807;
+# fixed in 1.0.9). checkov evaluates expressions from the scanned repo,
+# which in a pull request is untrusted input. Force the patch release.
+asteval==1.0.9
