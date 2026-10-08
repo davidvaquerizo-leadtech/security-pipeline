@@ -104,15 +104,38 @@ if wanted osv-scanner; then
       --python-version 3.12 "$f" -o "${dest%.txt}.lock.txt" 2>/dev/null \
       || log "osv-scanner: could not resolve $f (scanned as declared)"
   done
+  # Xcode keeps the SPM lock file at *.xcodeproj/project.xcworkspace/
+  # xcshareddata/swiftpm/Package.resolved (or *.xcworkspace/xcshareddata/
+  # swiftpm/). iOS .gitignore files often ignore *.xcodeproj/** and
+  # re-include that one file; osv-scanner's walk skips it even when git
+  # tracks it (LEAA-2694). Keep swiftpm/ out of the walk and scan each lock
+  # file with -L in its own run, so no file is counted twice.
+  if [ "$git_ok" = 1 ]; then mapfile -t spm < <(git ls-files -- ':(glob)**/swiftpm/Package.resolved')
+  else mapfile -t spm < <(find . -path '*/swiftpm/Package.resolved' -not -path "./$excl/*" \
+         -not -path '*/node_modules/*' -not -path '*/.build/*' -not -path '*/Pods/*'); fi
   osv-scanner scan source --recursive --allow-no-lockfiles \
-    --experimental-exclude "$excl" --format sarif \
+    --experimental-exclude "$excl" --experimental-exclude 'g:**/swiftpm' --format sarif \
     --output-file "$out/osv-scanner.sarif" . "$resolved" >/dev/null 2>"$out/.osv.log"
-  rc=$?
-  case "$rc" in
-    0|128) record osv-scanner ok ;;
-    1) record osv-scanner findings ;;
-    *) record osv-scanner error "exit=$rc"; tail -5 "$out/.osv.log" >&2 ;;
-  esac
+  rc=$? rc_spm=0 note=""
+  if [ "${#spm[@]}" -gt 0 ]; then
+    lflags=(); for f in "${spm[@]}"; do lflags+=(-L "$f"); done
+    osv-scanner scan source --format sarif --output-file "$out/.osv-spm.sarif" \
+      "${lflags[@]}" >/dev/null 2>"$out/.osv-spm.log"
+    rc_spm=$?
+    note="spm=${#spm[@]}"
+    case "$rc_spm" in
+      0|1) python3 "$LEAA_HOME/lib/merge_sarif.py" "$out/osv-scanner.sarif" "$out/.osv-spm.sarif" \
+             || rc_spm=merge_failed ;;
+    esac
+  fi
+  # 0 clean, 1 findings, 128 no packages found; anything else is an error.
+  err=""
+  case "$rc" in 0|1|128) ;; *) err="exit=$rc"; tail -5 "$out/.osv.log" >&2 ;; esac
+  case "$rc_spm" in 0|1|128) ;; *) err="${err:+$err }spm_exit=$rc_spm"
+    tail -5 "$out/.osv-spm.log" >&2 ;; esac
+  if [ -n "$err" ]; then record osv-scanner error "$err"
+  elif [ "$rc" = 1 ] || [ "$rc_spm" = 1 ]; then record osv-scanner findings "$note"
+  else record osv-scanner ok "$note"; fi
 fi
 
 # ---- checkov (IaC, Dockerfile) only when such files exist -----------------
