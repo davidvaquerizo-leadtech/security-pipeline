@@ -20,6 +20,8 @@ Owner: IT Security (LEAA). Ticket: LEAA-2446.
 
 Dependency files that osv-scanner reads include `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `pubspec.lock` (Flutter/Dart), `Podfile.lock`, `Package.resolved` (iOS), `gradle.lockfile` (Android), `go.sum`, `Cargo.lock`, `composer.lock`, and `requirements*.txt`.
 
+Xcode keeps the SPM lock file at `*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`. Many iOS `.gitignore` files hide this path from the osv-scanner walk. leaa-scan scans each tracked `*/swiftpm/Package.resolved` in a separate osv-scanner run with `-L`. The summary note `spm=N` shows the number of these files.
+
 Tool versions and sha256 checksums: [`tools/versions.env`](tools/versions.env). Python tools are hash-locked: [`tools/requirements-*.txt`](tools/).
 
 ## Add it to your repo
