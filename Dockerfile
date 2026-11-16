@@ -3,7 +3,7 @@
 # Base pinned by multi-arch index digest (python:3.12-slim-bookworm).
 # checkov:skip=CKV_DOCKER_2: CLI image run once per CI job; no long-lived service to health-check
 # checkov:skip=CKV_DOCKER_3: root is required to write reports into the CI-mounted checkout (see below)
-FROM python:3.12-slim-bookworm@sha256:392307d22300de8b5986851a12d9176dfc0fc073e65bf6523ebd7dcbeb23564e
+FROM python:3.15-slim-bookworm@sha256:96599df822d0e1c6bb700014a05c7f3c8cabc6e0f7ff3c4f9f69cee033b4b5d9
 
 ARG LEAA_VERSION=dev
 
